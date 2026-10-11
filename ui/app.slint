@@ -1,0 +1,440 @@
+// greg-repo-manager — profile-based fleet settings for GitHub/Forgejo/Gitea.
+// Wizard: Backend → Repos → Profil → Diff → Apply → Done.
+// Style: TIOSP M3-dark tokens, StepRail navigation, i18n via Rust side.
+import { LineEdit, CheckBox, ComboBox, Button, ProgressIndicator } from "std-widgets.slint";
+
+struct StepDef {
+    title: string,
+    sub: string,
+}
+
+struct RepoRow {
+    name: string,
+    checked: bool,
+    note: string,
+}
+
+struct ChangeRow {
+    repo: string,
+    area: string,
+    detail: string,
+    applied: string,
+}
+
+struct CapRow {
+    name: string,
+    ok: bool,
+}
+
+export global Theme {
+    in-out property <color> bg: #131314;
+    in-out property <color> card: #1e1f20;
+    in-out property <color> field: #282a2d;
+    in-out property <color> line: #3a3b3e;
+    in-out property <color> ink: #e3e3e3;
+    in-out property <color> sub2: #c4c7c5;
+    in-out property <color> muted: #8e918f;
+    in-out property <color> primary: #abc7ff;
+    in-out property <color> onprimary: #0a305f;
+    in-out property <color> danger: #ffb4ab;
+    in-out property <color> good: #6fdd8b;
+}
+
+component StepRail inherits VerticalLayout {
+    in property <[StepDef]> steps;
+    in property <int> current;
+    in property <[bool]> done;
+    callback go(int);
+    spacing: 0px;
+    for i in 6: HorizontalLayout {
+        spacing: 12px;
+        Rectangle {
+            width: 32px;
+            height: 54px;
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 14px;
+                y: 2px;
+                background: done[i] ? Theme.good : i == current ? Theme.primary : Theme.field;
+                animate background { duration: 450ms; easing: ease-in-out; }
+                Text {
+                    text: done[i] ? "✓" : (i + 1);
+                    color: done[i] ? Theme.onprimary : i == current ? Theme.onprimary : Theme.sub2;
+                    font-size: 14px;
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    width: 38px;
+                    height: 38px;
+                    x: -5px;
+                    y: -5px;
+                    mouse-cursor: pointer;
+                    clicked => { go(i); }
+                }
+            }
+            if i < 5: Rectangle {
+                width: 2px;
+                height: 24px;
+                x: 13px;
+                y: 30px;
+                background: done[i] ? Theme.good : Theme.line;
+            }
+        }
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: steps[i].title;
+                font-size: 11px;
+                font-weight: 600;
+                color: i == current ? Theme.primary : Theme.sub2;
+                overflow: elide;
+            }
+            Text {
+                text: steps[i].sub;
+                font-size: 14px;
+                font-weight: i == current ? 600 : 400;
+                color: i == current ? Theme.ink : Theme.sub2;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    in-out property <string> value;
+    callback edited(string);
+    spacing: 4px;
+    Text {
+        text: label;
+        font-size: 13px;
+        color: Theme.sub2;
+    }
+    Rectangle {
+        background: Theme.field;
+        border-radius: 8px;
+        height: 38px;
+        LineEdit {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text <=> value;
+            edited(text) => { edited(text); }
+        }
+    }
+}
+
+component Card inherits Rectangle {
+    in-out property <string> title;
+    background: Theme.card;
+    border-radius: 12px;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        Text {
+            text: title;
+            font-size: 15px;
+            font-weight: 600;
+            color: Theme.ink;
+            wrap: word-wrap;
+        }
+        @children
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "greg-repo-manager";
+    background: Theme.bg;
+    min-width: 1080px;
+    min-height: 680px;
+
+    in-out property <[StepDef]> steps;
+    in-out property <int> current: 0;
+    in-out property <[bool]> done;
+    callback nav-to(int);
+
+    // backend step
+    in-out property <[string]> backends;
+    in-out property <string> backend: "gh";
+    in-out property <string> owner: "mleem97";
+    in-out property <string> instance: "";
+    in-out property <string> auth-state: "";
+    in-out property <[CapRow]> caps;
+    callback backend-test();
+    callback owner-edited(string);
+
+    // repos step
+    in-out property <[RepoRow]> repos;
+    in-out property <string> repo-filter: "";
+    callback repos-refresh();
+    callback repos-toggle(int);
+    callback repos-all(bool);
+    callback filter-edited(string);
+
+    // profile step
+    in-out property <[string]> profiles;
+    in-out property <string> profile-name: "fleet-default";
+    in-out property <string> profile-desc: "";
+    in-out property <string> p-description: "";
+    in-out property <string> p-visibility: "public";
+    in-out property <string> p-default-branch: "main";
+    in-out property <string> p-topics: "";
+    in-out property <bool> p-issues: true;
+    in-out property <bool> p-wiki: false;
+    in-out property <bool> p-projects: false;
+    in-out property <bool> p-archived: false;
+    in-out property <bool> p-squash: true;
+    in-out property <bool> p-merge-commit: false;
+    in-out property <bool> p-rebase: false;
+    in-out property <bool> p-delete-branch: false;
+    in-out property <string> p-branches: "contribute-here,dev,staging,main";
+    in-out property <bool> p-no-force: true;
+    in-out property <bool> p-no-delete: true;
+    in-out property <bool> p-no-reviews: true;
+    in-out property <string> p-checks: "";
+    in-out property <string> p-labels: "";
+    in-out property <bool> p-labels-prune: false;
+    in-out property <string> p-collaborators: "";
+    in-out property <bool> p-actions: true;
+    callback profile-load(string);
+    callback profile-save();
+    callback profile-delete();
+
+    // diff / apply steps
+    in-out property <[ChangeRow]> changes;
+    in-out property <string> log: "";
+    in-out property <float> progress: 0.0;
+    in-out property <bool> busy: false;
+    in-out property <string> summary: "";
+    callback run-diff();
+    callback run-apply();
+    callback quit-app();
+
+    HorizontalLayout {
+        padding: 0px;
+        spacing: 0px;
+        Rectangle {
+            width: 300px;
+            background: Theme.card;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 6px;
+                Text {
+                    text: "greg-repo-manager";
+                    font-size: 17px;
+                    font-weight: 700;
+                    color: Theme.ink;
+                }
+                Text {
+                    text: "fleet repo settings";
+                    font-size: 12px;
+                    color: Theme.muted;
+                }
+                StepRail {
+                    steps: steps;
+                    current: current;
+                    done: done;
+                    go(i) => { nav-to(i); }
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding: 22px;
+                spacing: 14px;
+                // ---- step 0: backend ----
+                if current == 0: VerticalLayout {
+                    spacing: 12px;
+                    Card {
+                        title: "Backend";
+                        HorizontalLayout {
+                            spacing: 12px;
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text { text: "Forge"; font-size: 13px; color: Theme.sub2; }
+                                ComboBox {
+                                    model: backends;
+                                    current-value <=> backend;
+                                }
+                            }
+                            Field { label: "Owner / Org"; value <=> owner; edited(t) => { owner-edited(t); } }
+                            Field { label: "Instance (fj/tea, leer = default)"; value <=> instance; }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: start;
+                            Button { text: "Verbindung testen"; clicked => { backend-test(); } }
+                            Text { text: auth-state; font-size: 13px; color: Theme.sub2; vertical-alignment: center; wrap: word-wrap; }
+                        }
+                    }
+                    Card {
+                        title: "Fähigkeiten";
+                        for c in caps: HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: c.ok ? "✓" : "✗"; color: c.ok ? Theme.good : Theme.danger; font-size: 13px; width: 20px; }
+                            Text { text: c.name; font-size: 13px; color: Theme.sub2; }
+                        }
+                    }
+                }
+                // ---- step 1: repos ----
+                if current == 1: VerticalLayout {
+                    spacing: 12px;
+                    Card {
+                        title: "Repositories";
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Button { text: "Aktualisieren"; clicked => { repos-refresh(); } }
+                            Button { text: "Alle"; clicked => { repos-all(true); } }
+                            Button { text: "Keine"; clicked => { repos-all(false); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Field { label: "Filter"; value <=> repo-filter; edited(t) => { filter-edited(t); } }
+                        }
+                        Flickable {
+                            height: 380px;
+                            content-height: 10000px;
+                            VerticalLayout {
+                                spacing: 2px;
+                                for i in repos.length: HorizontalLayout {
+                                    spacing: 8px;
+                                    CheckBox {
+                                        checked: repos[i].checked;
+                                        toggled => { repos-toggle(i); }
+                                    }
+                                    Text { text: repos[i].name; font-size: 13px; color: Theme.ink; width: 320px; overflow: elide; }
+                                    Text { text: repos[i].note; font-size: 12px; color: Theme.muted; overflow: elide; }
+                                }
+                            }
+                        }
+                    }
+                }
+                // ---- step 2: profile ----
+                if current == 2: VerticalLayout {
+                    spacing: 12px;
+                    Flickable {
+                        height: 560px;
+                        content-height: 10000px;
+                        VerticalLayout {
+                            spacing: 12px;
+                            Card {
+                                title: "Profil";
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    ComboBox { model: profiles; current-value <=> profile-name; }
+                                    Button { text: "Laden"; clicked => { profile-load(profile-name); } }
+                                    Button { text: "Speichern"; clicked => { profile-save(); } }
+                                    Button { text: "Löschen"; clicked => { profile-delete(); } }
+                                }
+                                Field { label: "Beschreibung"; value <=> profile-desc; }
+                            }
+                            Card {
+                                title: "Allgemein";
+                                Field { label: "Description"; value <=> p-description; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Field { label: "Visibility (public/private)"; value <=> p-visibility; }
+                                    Field { label: "Default branch"; value <=> p-default-branch; }
+                                    Field { label: "Topics (Komma)"; value <=> p-topics; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    CheckBox { text: "Issues"; checked <=> p-issues; }
+                                    CheckBox { text: "Wiki"; checked <=> p-wiki; }
+                                    CheckBox { text: "Projects"; checked <=> p-projects; }
+                                    CheckBox { text: "Archived"; checked <=> p-archived; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    CheckBox { text: "Squash"; checked <=> p-squash; }
+                                    CheckBox { text: "Merge-Commit"; checked <=> p-merge-commit; }
+                                    CheckBox { text: "Rebase"; checked <=> p-rebase; }
+                                    CheckBox { text: "Branch löschen"; checked <=> p-delete-branch; }
+                                }
+                            }
+                            Card {
+                                title: "Branches + Schutz";
+                                Field { label: "Branches sicherstellen (Komma)"; value <=> p-branches; }
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    CheckBox { text: "Kein Force-Push"; checked <=> p-no-force; }
+                                    CheckBox { text: "Kein Löschen"; checked <=> p-no-delete; }
+                                    CheckBox { text: "Keine Reviews nötig"; checked <=> p-no-reviews; }
+                                }
+                                Field { label: "Required checks (Komma, leer = keine)"; value <=> p-checks; }
+                            }
+                            Card {
+                                title: "Labels / Mitarbeiter / Actions";
+                                Field { label: "Labels (name:farbe, Semikolon-getrennt)"; value <=> p-labels; }
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    CheckBox { text: "Extra Labels löschen"; checked <=> p-labels-prune; }
+                                    CheckBox { text: "Actions an"; checked <=> p-actions; }
+                                }
+                                Field { label: "Collaborators (user:permission, Semikolon)"; value <=> p-collaborators; }
+                            }
+                        }
+                    }
+                }
+                // ---- step 3: diff ----
+                if current == 3: VerticalLayout {
+                    spacing: 12px;
+                    Card {
+                        title: "Dry-Run";
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Button { text: "Diff berechnen"; clicked => { run-diff(); } }
+                            Text { text: summary; font-size: 13px; color: Theme.sub2; vertical-alignment: center; }
+                        }
+                        Flickable {
+                            height: 440px;
+                            content-height: 10000px;
+                            VerticalLayout {
+                                spacing: 2px;
+                                for c in changes: Text {
+                                    text: c.repo + " [" + c.area + "] " + c.detail + " (" + c.applied + ")";
+                                    font-size: 12px;
+                                    color: Theme.sub2;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+                // ---- step 4: apply ----
+                if current == 4: VerticalLayout {
+                    spacing: 12px;
+                    Card {
+                        title: "Anwenden";
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Button { text: "Jetzt anwenden"; enabled: !busy; clicked => { run-apply(); } }
+                            ProgressIndicator { progress <=> progress; horizontal-stretch: 1; }
+                        }
+                        Flickable {
+                            height: 380px;
+                            content-height: 10000px;
+                            Text { text: log; font-size: 12px; color: Theme.sub2; wrap: word-wrap; width: 700px; }
+                        }
+                    }
+                }
+                // ---- step 5: done ----
+                if current == 5: VerticalLayout {
+                    spacing: 12px;
+                    Card {
+                        title: "Fertig";
+                        Text { text: summary; font-size: 14px; color: Theme.ink; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Button { text: "Beenden"; clicked => { quit-app(); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
